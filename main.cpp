@@ -13,18 +13,18 @@ int main()
     auto season = create_publisher(temp);
 
     size_t web_news_counter{};
-    Subscriber<std::string> web_news(meteo, [&web_news_counter](const Topic<std::string>& topic, const std::string& data){
+    Subscriber<std::string> web_news(meteo, [&web_news_counter](const Topic<std::string>* topic, const std::string& data){
         web_news_counter++;
     });
 
     size_t ansa_counter{};
-    Subscriber<std::string> ansa(meteo, [&ansa_counter](const Topic<std::string>& topic, const std::string& data){
+    Subscriber<std::string> ansa(meteo, [&ansa_counter](const Topic<std::string>* topic, const std::string& data){
         ansa_counter++;
     });
 
 
     size_t g_counter{};
-    Subscriber<std::string> global({meteo, temp}, [&g_counter](const Topic<std::string>& topic, const std::string& data){
+    Subscriber<std::string> global({meteo, temp}, [&g_counter](const Topic<std::string>* topic, const std::string& data){
         g_counter++;
     });
 

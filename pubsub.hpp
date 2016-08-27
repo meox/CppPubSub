@@ -36,7 +36,7 @@ namespace ps
         Publisher(topic_ptr_t<T> topic) : _topic{topic}
         {}
 
-        void produce(topic_ptr_t<T> t, const T& msg)
+        void produce(const topic_ptr_t<T>& t, const T& msg)
         {
             t->send(msg);
         }
@@ -66,7 +66,7 @@ namespace ps
         void send(const T& data)
         {
             for(auto& sub : subs)
-                sub->deliver(_name, data);
+                sub->deliver(this, data);
         }
 
         void subscribe(Subscriber<T>* s)
@@ -84,7 +84,7 @@ namespace ps
     class Subscriber
     {
     public:
-        using f_callback_t = std::function<void(const Topic<T>& topic, T data)>;
+        using f_callback_t = std::function<void(const Topic<T>* topic, T data)>;
 
         Subscriber(f_callback_t f) : callaback{std::move(f)}
         {}
@@ -96,19 +96,19 @@ namespace ps
 
         Subscriber(const std::initializer_list<topic_ptr_t<T>>& topics, f_callback_t f) : callaback{std::move(f)}
         {
-            for (auto& topic : topics)
+            for (const auto& topic : topics)
                 subscribe(topic);
         }
 
-        void subscribe(topic_ptr_t<T> topic)
+        void subscribe(const topic_ptr_t<T>& topic)
         {
             topic->subscribe(this);
         }
 
-        void deliver(const std::string& topic_name, const T& msg)
+        void deliver(const Topic<T>* topic, const T& msg)
         {
             std::lock_guard<std::mutex> l(m);
-            data.push(std::make_pair(topic_name, msg));
+            data.emplace(topic, msg);
         }
 
         void run()
@@ -153,9 +153,8 @@ namespace ps
         }
 
     private:
-
         f_callback_t callaback;
-        std::queue<std::pair<std::string, T>> data;
+        std::queue<std::pair<const Topic<T>*, T>> data;
         std::atomic<bool> stopped{true};
         std::mutex m;
         std::thread th;
