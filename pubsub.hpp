@@ -8,9 +8,11 @@
 #include <memory>
 #include <vector>
 #include <thread>
-#include <queue>
+#include <map>
 #include <mutex>
+
 #include <atomic>
+#include <boost/lockfree/spsc_queue.hpp>
 
 
 namespace ps
@@ -57,6 +59,7 @@ namespace ps
     {
     public:
         Topic() = default;
+
         Topic(std::string name) : _name{std::move(name)}
         {}
 
@@ -71,7 +74,20 @@ namespace ps
             subs.push_back(s);
         }
 
+        size_t get_id() const
+        {
+            return id;
+        }
+
     private:
+        static size_t get_counter()
+        {
+            static std::size_t counter = 0;
+            counter++;
+            return counter;
+        }
+
+        size_t id{get_counter()};
         std::string _name{};
         std::vector<std::shared_ptr<Subscriber<T>>> subs;
     };
@@ -83,12 +99,13 @@ namespace ps
     {
     public:
         using f_callback_t = std::function<void(const Topic<T>* topic, T data)>;
+        using msg_t = std::pair<const Topic<T>*, T>;
+        using queue_t = boost::lockfree::spsc_queue<msg_t>;
+
 
         Subscriber() = default;
-
         Subscriber(f_callback_t f) : callaback{std::move(f)}
         {}
-
 
         void subscribe(const std::vector<topic_ptr_t<T>>& topics)
         {
@@ -105,39 +122,29 @@ namespace ps
 
         void subscribe(const topic_ptr_t<T>& topic)
         {
+            m_data[topic->get_id()] = std::make_shared<queue_t>(300000ull);
             topic->subscribe(get_shared());
         }
 
-        virtual void deliver(const Topic<T>* topic, const T& msg)
+        virtual void deliver(const Topic<T>* topic, const T& e)
         {
-            std::lock_guard<std::mutex> l(m);
-            data.emplace(topic, msg);
+            auto& data = m_data[topic->get_id()];
+            msg_t msg{topic, e};
+            while (true)
+            {
+                bool b = data->push(msg);
+                if (b)
+                    break;
+                else
+                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
         }
 
         void run()
         {
             stopped = false;
             th = std::thread([this](){
-                while (true)
-                {
-                    std::unique_lock<std::mutex> g(m);
-                    const auto is_empty = data.empty();
-                    if (is_empty && stopped)
-                        break;
-
-                    if (!is_empty)
-                    {
-                        auto msg = data.front();
-                        data.pop();
-                        g.unlock();
-                        execute(msg.first, msg.second);
-                    }
-                    else
-                    {
-                        g.unlock();
-                        std::this_thread::sleep_for(std::chrono::milliseconds(3));
-                    }
-                }
+                event_loop();
             });
         }
 
@@ -156,6 +163,31 @@ namespace ps
         }
 
     protected:
+        virtual void event_loop()
+        {
+            msg_t msg;
+
+            while (true)
+            {
+                bool g_data{false};
+                for (auto& data : m_data)
+                {
+                    const auto is_data = data.second->pop(msg);
+                    if (is_data)
+                    {
+                        g_data = true;
+                        execute(msg.first, msg.second);
+                    }
+                }
+
+                if (!g_data && stopped)
+                    break;
+
+                if (!g_data)
+                    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            }
+        }
+
         virtual void execute(const Topic<T>* topic, const T& data)
         {
             if(callaback)
@@ -169,9 +201,8 @@ namespace ps
 
     private:
         f_callback_t callaback;
-        std::queue<std::pair<const Topic<T>*, T>> data;
+        std::map<size_t, std::shared_ptr<queue_t>> m_data;
         std::atomic<bool> stopped{true};
-        std::mutex m;
         std::thread th;
     };
 
