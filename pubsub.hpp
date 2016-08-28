@@ -69,7 +69,7 @@ namespace ps
                 sub->deliver(this, data);
         }
 
-        void subscribe(subscriber_ptr_t<T> s)
+        void subscribe(Subscriber<T>* s)
         {
             subs.push_back(s);
         }
@@ -89,19 +89,19 @@ namespace ps
 
         size_t id{get_counter()};
         std::string _name{};
-        std::vector<std::shared_ptr<Subscriber<T>>> subs;
+        std::vector<Subscriber<T>*> subs;
     };
 
 
-
     template <typename T>
-    class Subscriber : public std::enable_shared_from_this<Subscriber<T>>
+    class Subscriber
     {
     public:
         using f_callback_t = std::function<void(const Topic<T>* topic, T data)>;
         using msg_t = std::pair<const Topic<T>*, T>;
         using queue_t = boost::lockfree::spsc_queue<msg_t>;
 
+        using topic_raw_ptr = const Topic<T>*;
 
         Subscriber() = default;
         Subscriber(f_callback_t f) : callaback{std::move(f)}
@@ -123,12 +123,12 @@ namespace ps
         void subscribe(const topic_ptr_t<T>& topic)
         {
             m_data[topic->get_id()] = std::make_shared<queue_t>(300000ull);
-            topic->subscribe(get_shared());
+            topic->subscribe(this);
         }
 
         virtual void deliver(const Topic<T>* topic, const T& e)
         {
-            auto& data = m_data[topic->get_id()];
+            auto& data = m_data.at(topic->get_id());
             msg_t msg{topic, e};
             while (true)
             {
@@ -188,15 +188,10 @@ namespace ps
             }
         }
 
-        virtual void execute(const Topic<T>* topic, const T& data)
+        virtual void execute(topic_raw_ptr topic, const T& data)
         {
             if(callaback)
                 callaback(topic, data);
-        }
-
-        subscriber_ptr_t<T> get_shared()
-        {
-            return this->shared_from_this();
         }
 
     private:

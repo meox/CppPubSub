@@ -4,6 +4,17 @@
 
 using namespace ps;
 
+
+struct global_sub : Subscriber<std::string>
+{
+    void execute(topic_raw_ptr topic, const std::string& data) override
+    {
+        counter++;
+    }
+
+    size_t counter{0};
+};
+
 int main()
 {
     auto meteo = create_topic<std::string>("meteo");
@@ -23,14 +34,12 @@ int main()
     });
 
 
-    size_t g_counter{};
-    auto global = create_subscriber({meteo, temp}, [&g_counter](const Topic<std::string>* topic, const std::string& data){
-        g_counter++;
-    });
+    global_sub global;
+    global.subscribe({meteo, temp});
 
     web_news->run();
     ansa->run();
-    global->run();
+    global.run();
 
     std::thread th_meteo([&]{
         std::vector<std::string> cities{"Rome", "Florence", "Venice"};
@@ -47,11 +56,11 @@ int main()
 
     web_news->unsubscribe();
     ansa->unsubscribe();
-    global->unsubscribe();
+    global.unsubscribe();
 
     std::cout << "web_news_counter: " << web_news_counter << std::endl;
     std::cout << "ansa_counter: " << ansa_counter << std::endl;
-    std::cout << "g_counter: " << g_counter << std::endl;
+    std::cout << "g_counter: " << global.counter << std::endl;
 
     return 0;
 }
