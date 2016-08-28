@@ -33,13 +33,10 @@ namespace ps
     {
     public:
         Publisher() = default;
-        Publisher(topic_ptr_t<T> topic) : _topic{topic}
+        Publisher(const topic_ptr_t<T>& topic) : _topic{topic}
         {}
 
-        void produce(const topic_ptr_t<T>& t, const T& msg)
-        {
-            t->send(msg);
-        }
+        void produce(const topic_ptr_t<T>& t, const T& msg) { t->send(msg); }
 
         void produce(const T& msg)
         {
@@ -69,43 +66,49 @@ namespace ps
                 sub->deliver(this, data);
         }
 
-        void subscribe(Subscriber<T>* s)
+        void subscribe(subscriber_ptr_t<T> s)
         {
             subs.push_back(s);
         }
 
     private:
         std::string _name{};
-        std::vector<Subscriber<T>*> subs;
+        std::vector<std::shared_ptr<Subscriber<T>>> subs;
     };
 
 
+
     template <typename T>
-    class Subscriber
+    class Subscriber : public std::enable_shared_from_this<Subscriber<T>>
     {
     public:
         using f_callback_t = std::function<void(const Topic<T>* topic, T data)>;
 
+        Subscriber() = default;
+
         Subscriber(f_callback_t f) : callaback{std::move(f)}
         {}
 
-        Subscriber(topic_ptr_t<T> topic, f_callback_t f) : callaback{std::move(f)}
+
+        void subscribe(const std::vector<topic_ptr_t<T>>& topics)
         {
-            subscribe(topic);
+            for (const auto& topic : topics)
+                subscribe(topic);
         }
 
-        Subscriber(const std::initializer_list<topic_ptr_t<T>>& topics, f_callback_t f) : callaback{std::move(f)}
+        void subscribe(const std::vector<topic_ptr_t<T>>& topics, f_callback_t f)
         {
+            callaback = std::move(f);
             for (const auto& topic : topics)
                 subscribe(topic);
         }
 
         void subscribe(const topic_ptr_t<T>& topic)
         {
-            topic->subscribe(this);
+            topic->subscribe(get_shared());
         }
 
-        void deliver(const Topic<T>* topic, const T& msg)
+        virtual void deliver(const Topic<T>* topic, const T& msg)
         {
             std::lock_guard<std::mutex> l(m);
             data.emplace(topic, msg);
@@ -127,7 +130,7 @@ namespace ps
                         auto msg = data.front();
                         data.pop();
                         g.unlock();
-                        callaback(msg.first, msg.second);
+                        execute(msg.first, msg.second);
                     }
                     else
                     {
@@ -147,9 +150,21 @@ namespace ps
             }
         }
 
-        ~Subscriber()
+        virtual ~Subscriber()
         {
             unsubscribe();
+        }
+
+    protected:
+        virtual void execute(const Topic<T>* topic, const T& data)
+        {
+            if(callaback)
+                callaback(topic, data);
+        }
+
+        subscriber_ptr_t<T> get_shared()
+        {
+            return this->shared_from_this();
         }
 
     private:
@@ -171,6 +186,29 @@ namespace ps
     publisher_ptr_t<T> create_publisher(topic_ptr_t<T> topic)
     {
         return std::make_shared<Publisher<T>>(topic);
+    }
+
+    template <typename T>
+    subscriber_ptr_t<T> create_subscriber(const topic_ptr_t<T>& topic, typename Subscriber<T>::f_callback_t&& f)
+    {
+        auto s = std::make_shared<Subscriber<T>>(f);
+        s->subscribe(topic);
+        return s;
+    }
+
+    template <typename T, typename F>
+    subscriber_ptr_t<T> create_subscriber(const std::vector<topic_ptr_t<T>>& topics, F&& f)
+    {
+        auto s = std::make_shared<Subscriber<T>>(f);
+        s->subscribe(topics);
+        return s;
+    }
+
+    template <typename T, typename F>
+    subscriber_ptr_t<T> create_subscriber(const std::initializer_list<topic_ptr_t<T>>& topics, F&& f)
+    {
+        std::vector<topic_ptr_t<T>> v_t{topics};
+        return create_subscriber(v_t, std::forward<F>(f));
     }
 }
 
