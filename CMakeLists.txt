@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.6)
 project(pubsub)
 
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall --pedantic -std=c++14")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -pedantic -Werror -std=c++14")
 
 FIND_PACKAGE(Boost)
 FIND_PACKAGE (Threads)

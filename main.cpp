@@ -29,7 +29,7 @@ struct custom_publisher : Publisher<std::string*>
 	}
 
 private:
-	size_t c{0};
+	size_t c{};
 };
 
 std::vector<std::string*> v_str;
