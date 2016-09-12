@@ -5,31 +5,50 @@
 using namespace ps;
 
 
-struct global_sub : Subscriber<std::string>
+struct global_sub : Subscriber<std::string*>
 {
-    void execute(topic_raw_ptr topic, const std::string& data) override
+    void execute(topic_raw_ptr topic, data_t data) override
     {
         counter++;
+
+		if (counter == 10)
+			std::cout << *data << "\n";
     }
 
     size_t counter{0};
 };
 
+
+struct custom_publisher : Publisher<std::string*>
+{
+	using Publisher<std::string*>::Publisher;
+};
+
+std::vector<std::string*> v_str;
+std::string* push_data(const std::string& e)
+{
+	v_str.push_back(new std::string(e));
+	return v_str[v_str.size() - 1];
+}
+
+
 int main()
 {
-    auto meteo = create_topic<std::string>("meteo");
+	auto meteo = create_topic<std::string*>("meteo");
     auto meteo_station = create_publisher(meteo);
 
-    auto temp = create_topic<std::string>("temp");
+    auto temp = create_topic<std::string*>("temp");
     auto season = create_publisher(temp);
 
+	auto snd = create_publisher<std::string*, custom_publisher>(temp);
+
     size_t web_news_counter{};
-    auto web_news = create_subscriber(meteo, [&web_news_counter](const Topic<std::string>* topic, const std::string& data){
+    auto web_news = create_subscriber(meteo, [&web_news_counter](const Topic<std::string*>* topic, const std::string* data){
         web_news_counter++;
     });
 
     size_t ansa_counter{};
-    auto ansa = create_subscriber(meteo, [&ansa_counter](const Topic<std::string>* topic, const std::string& data){
+    auto ansa = create_subscriber(meteo, [&ansa_counter](const Topic<std::string*>* topic, const std::string* data){
         ansa_counter++;
     });
 
@@ -46,9 +65,9 @@ int main()
 
         for (uint32_t i = 0; i < 1000000; i++)
         {
-            const auto tcelsius = std::to_string(24 + (i%10));
-            meteo_station->produce(cities[i%3] + ", " + tcelsius);
-            season->produce(tcelsius);
+			const std::string tcelsius = std::to_string(24 + (i % 10));
+            meteo_station->produce(push_data(tcelsius));
+            season->produce(push_data(cities[i%3] + ", " + tcelsius));
         }
     });
 

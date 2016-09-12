@@ -10,9 +10,9 @@
 #include <thread>
 #include <map>
 #include <mutex>
-
 #include <atomic>
-#include <boost/lockfree/spsc_queue.hpp>
+
+#include <boost/lockfree/queue.hpp>
 
 
 namespace ps
@@ -92,16 +92,22 @@ namespace ps
         std::vector<Subscriber<T>*> subs;
     };
 
+    template <typename T>
+    struct msg_container_t
+    {
+		const Topic<T>* topic_ptr;
+		T data;
+    };
 
     template <typename T>
     class Subscriber
     {
     public:
         using f_callback_t = std::function<void(const Topic<T>* topic, T data)>;
-        using msg_t = std::pair<const Topic<T>*, T>;
-        using queue_t = boost::lockfree::spsc_queue<msg_t>;
+        using queue_t = boost::lockfree::queue<msg_container_t<T>>;
 
         using topic_raw_ptr = const Topic<T>*;
+		using data_t = const T&;
 
         Subscriber() = default;
         Subscriber(f_callback_t f) : callaback{std::move(f)}
@@ -113,6 +119,12 @@ namespace ps
                 subscribe(topic);
         }
 
+		void subscribe(const std::initializer_list<topic_ptr_t<T>>& topics)
+		{
+			for (const auto& topic : topics)
+				subscribe(topic);
+		}
+
         void subscribe(const std::vector<topic_ptr_t<T>>& topics, f_callback_t f)
         {
             callaback = std::move(f);
@@ -122,17 +134,18 @@ namespace ps
 
         void subscribe(const topic_ptr_t<T>& topic)
         {
-            m_data[topic->get_id()] = std::make_shared<queue_t>(300000ull);
+            //m_data[topic->get_id()] = std::make_shared<queue_t>(300000ull);
             topic->subscribe(this);
         }
 
-        virtual void deliver(const Topic<T>* topic, const T& e)
+        virtual void deliver(topic_raw_ptr topic, data_t e)
         {
-            auto& data = m_data.at(topic->get_id());
-            msg_t msg{topic, e};
-            while (true)
+            //auto& data = m_data.at(topic->get_id());
+			msg_container_t<T> msg{topic, e};
+
+			while (true)
             {
-                bool b = data->push(msg);
+                bool b = data.push(msg);
                 if (b)
                     break;
                 else
@@ -165,30 +178,27 @@ namespace ps
     protected:
         virtual void event_loop()
         {
-            msg_t msg;
+			msg_container_t<T> msg;
 
             while (true)
             {
                 bool g_data{false};
-                for (auto& data : m_data)
-                {
-                    const auto is_data = data.second->pop(msg);
-                    if (is_data)
-                    {
-                        g_data = true;
-                        execute(msg.first, msg.second);
-                    }
-                }
+				const auto is_data = data.pop(msg);
+				if (is_data)
+				{
+					g_data = true;
+					execute(msg.topic_ptr, msg.data);
+				}
 
                 if (!g_data && stopped)
                     break;
 
-                if (!g_data)
+                if (!g_data) // no data at all (for every queue)
                     std::this_thread::sleep_for(std::chrono::milliseconds(50));
             }
         }
 
-        virtual void execute(topic_raw_ptr topic, const T& data)
+        virtual void execute(topic_raw_ptr topic, data_t data)
         {
             if(callaback)
                 callaback(topic, data);
@@ -196,7 +206,7 @@ namespace ps
 
     private:
         f_callback_t callaback;
-        std::map<size_t, std::shared_ptr<queue_t>> m_data;
+        queue_t data;
         std::atomic<bool> stopped{true};
         std::thread th;
     };
@@ -214,7 +224,14 @@ namespace ps
         return std::make_shared<Publisher<T>>(topic);
     }
 
-    template <typename T>
+	template <typename T, typename Q>
+	publisher_ptr_t<T> create_publisher(topic_ptr_t<T> topic)
+	{
+		return std::make_shared<Q>(topic);
+	}
+
+
+	template <typename T>
     subscriber_ptr_t<T> create_subscriber(const topic_ptr_t<T>& topic, typename Subscriber<T>::f_callback_t&& f)
     {
         auto s = std::make_shared<Subscriber<T>>(f);
