@@ -14,6 +14,7 @@
 
 #include <boost/lockfree/policies.hpp>
 #include <boost/lockfree/queue.hpp>
+#include <set>
 
 
 namespace ps
@@ -45,7 +46,7 @@ namespace ps
 			_topic->send(std::forward<T>(msg));
 		}
 
-		virtual void nodata() {}
+		virtual void signal(int type_signal) {}
 
 		size_t get_id() const {	return id; }
 		virtual ~Publisher()
@@ -88,38 +89,46 @@ namespace ps
 
 		void attach(Publisher<T>* s)
 		{
+			std::lock_guard<std::mutex> l(m);
 			pubs[s->get_id()] = s;
 		}
 
 		void detach(Publisher<T>* s)
 		{
+			std::lock_guard<std::mutex> l(m);
 			pubs.erase(s->get_id());
 		}
 
 		void subscribe(Subscriber<T>* s)
 		{
+			std::lock_guard<std::mutex> l(m);
 			subs[s->get_id()] = s;
-			m_no_data[s->get_id()] = false;
+			signals[s->get_id()].clear();
 		}
 
 		void unsubscribe(Subscriber<T>* s)
 		{
+			std::lock_guard<std::mutex> l(m);
 			subs.erase(s->get_id());
-			m_no_data.erase(s->get_id());
+			signals.erase(s->get_id());
 		}
 
-		void nodata(Subscriber<T>* s)
+		void signal(int type_signal, size_t subscriber_id)
 		{
-			m_no_data[s->get_id()] = true;
+			std::lock_guard<std::mutex> l(m);
+			signals[subscriber_id].insert(type_signal);
 
-			bool r = std::all_of(m_no_data.begin(), m_no_data.end(), [](const auto& e){ return e.second; });
+			bool r = std::all_of(signals.begin(), signals.end(), [type_signal](const auto& e){
+				return e.second.find(type_signal) != e.second.end();
+			});
+
 			if (r)
 			{
-				for (auto& e : m_no_data)
-					e.second = false;
+				for (auto& e : signals)
+					e.second.erase(type_signal);
 
 				for (auto& p : pubs)
-					p.second->nodata();
+					p.second->signal(type_signal);
 			}
 		}
 
@@ -133,11 +142,12 @@ namespace ps
 			return counter;
 		}
 
+		std::mutex m;
 		size_t id{get_counter()};
 		std::string _name{};
 		std::map<size_t, Subscriber<T>*> subs;
 		std::map<size_t, Publisher<T>*> pubs;
-		std::map<size_t, bool> m_no_data{};
+		std::map<size_t, std::set<int>> signals{};
 	};
 
 
@@ -245,28 +255,41 @@ namespace ps
 		virtual void event_loop()
 		{
 			msg_container_t<T> msg;
+			bool at_least_one{false};
+			bool mute_nodata{false};
 
 			while (true)
 			{
-				bool g_data{false};
+				bool data_arrived{false};
 				const auto is_data = data.pop(msg);
 				if (is_data)
 				{
-					g_data = true;
+					mute_nodata = false;
+					at_least_one = true;
+					data_arrived = true;
 					execute(msg.topic_ptr, msg.data);
 				}
 
-				if (!g_data && stopped)
-					break;
-
-				if (!g_data) // no data
+				if (!data_arrived)
 				{
-					for (auto& t : topics)
-						t.second->nodata(this);
+					if (stopped)
+						break;
+
+					if (at_least_one && !mute_nodata)
+					{
+						emit_signal(0);
+						mute_nodata = true;
+					}
 
 					std::this_thread::sleep_for(std::chrono::milliseconds(50));
 				}
 			}
+		}
+
+		void emit_signal(int type_signal)
+		{
+			for (auto& t : topics)
+				t.second->signal(type_signal, get_id());
 		}
 
 		virtual void execute(topic_raw_ptr topic, data_t data)

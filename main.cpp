@@ -23,9 +23,9 @@ struct custom_publisher : Publisher<std::string*>
 {
 	using Publisher<std::string*>::Publisher;
 
-	virtual void nodata() override
+	virtual void signal(int type_signal) override
 	{
-		std::cout << "custom_publisher nodata! " << c++ << "\n";
+		std::cout << "custom_publisher (" << type_signal << ") " << c++ << "\n";
 	}
 
 private:
