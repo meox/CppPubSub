@@ -22,6 +22,14 @@ struct global_sub : Subscriber<std::string*>
 struct custom_publisher : Publisher<std::string*>
 {
 	using Publisher<std::string*>::Publisher;
+
+	virtual void nodata() override
+	{
+		std::cout << "custom_publisher nodata! " << c++ << "\n";
+	}
+
+private:
+	size_t c{0};
 };
 
 std::vector<std::string*> v_str;
@@ -38,9 +46,7 @@ int main()
 	auto meteo_station = create_publisher(meteo);
 
 	auto temp = create_topic<std::string*>("temp");
-	auto season = create_publisher(temp);
-
-	auto snd = create_publisher<std::string*, custom_publisher>(temp);
+	auto season = create_publisher<std::string*, custom_publisher>(temp);
 
 	size_t web_news_counter{};
 	auto web_news = create_subscriber(meteo, [&web_news_counter](const Topic<std::string*>* topic, const std::string* data){

@@ -35,24 +35,37 @@ namespace ps
 	class Publisher
 	{
 	public:
-		Publisher() = default;
 		Publisher(const topic_ptr_t<T>& topic) : _topic{topic}
-		{}
-
-		void produce(const topic_ptr_t<T>& t, T&& msg)
 		{
-			t->send(std::forward<T>(msg));
+			_topic->attach(this);
 		}
 
 		void produce(T&& msg)
 		{
-			if(_topic)
-				_topic->send(std::forward<T>(msg));
+			_topic->send(std::forward<T>(msg));
+		}
+
+		virtual void nodata() {}
+
+		size_t get_id() const {	return id; }
+		virtual ~Publisher()
+		{
+			_topic->detach(this);
 		}
 
 	private:
+		static size_t get_counter()
+		{
+			static std::size_t counter{};
+			counter++;
+			return counter;
+		}
+
+	private:
+		const size_t id{get_counter()};
 		topic_ptr_t<T> _topic;
 	};
+
 
 	template <typename T>
 	using publisher_ptr_t = std::shared_ptr<Publisher<T>>;
@@ -73,14 +86,41 @@ namespace ps
 				sub.second->deliver(this, data);
 		}
 
+		void attach(Publisher<T>* s)
+		{
+			pubs[s->get_id()] = s;
+		}
+
+		void detach(Publisher<T>* s)
+		{
+			pubs.erase(s->get_id());
+		}
+
 		void subscribe(Subscriber<T>* s)
 		{
 			subs[s->get_id()] = s;
+			m_no_data[s->get_id()] = false;
 		}
 
 		void unsubscribe(Subscriber<T>* s)
 		{
 			subs.erase(s->get_id());
+			m_no_data.erase(s->get_id());
+		}
+
+		void nodata(Subscriber<T>* s)
+		{
+			m_no_data[s->get_id()] = true;
+
+			bool r = std::all_of(m_no_data.begin(), m_no_data.end(), [](const auto& e){ return e.second; });
+			if (r)
+			{
+				for (auto& e : m_no_data)
+					e.second = false;
+
+				for (auto& p : pubs)
+					p.second->nodata();
+			}
 		}
 
 		size_t get_id() const {	return id; }
@@ -96,7 +136,10 @@ namespace ps
 		size_t id{get_counter()};
 		std::string _name{};
 		std::map<size_t, Subscriber<T>*> subs;
+		std::map<size_t, Publisher<T>*> pubs;
+		std::map<size_t, bool> m_no_data{};
 	};
+
 
 	template <typename T>
 	struct msg_container_t
@@ -104,6 +147,7 @@ namespace ps
 		const Topic<T>* topic_ptr;
 		T data;
 	};
+
 
 	template <typename T>
 	class Subscriber
@@ -141,11 +185,13 @@ namespace ps
 		void subscribe(const topic_ptr_t<T>& topic)
 		{
 			topic->subscribe(this);
+			topics[topic->get_id()] = topic;
 		}
 
 		void unsubscribe(const topic_ptr_t<T>& topic)
 		{
 			topic->unsubscribe(this);
+			topics.erase(topic->get_id());
 		}
 
 		virtual void deliver(topic_raw_ptr topic, data_t e)
@@ -215,6 +261,8 @@ namespace ps
 
 				if (!g_data) // no data
 				{
+					for (auto& t : topics)
+						t.second->nodata(this);
 
 					std::this_thread::sleep_for(std::chrono::milliseconds(50));
 				}
@@ -232,7 +280,7 @@ namespace ps
 		queue_t data;
 		std::atomic<bool> stopped{true};
 
-		std::vector<topic_ptr_t<T>> topics;
+		std::map<size_t, topic_ptr_t<T>> topics;
 		std::thread th;
 		const size_t id{get_counter()};
 	};
