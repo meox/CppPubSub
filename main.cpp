@@ -73,9 +73,9 @@ int main()
 
 	th_meteo.join();
 
-	web_news->unsubscribe();
-	ansa->unsubscribe();
-	global.unsubscribe();
+	web_news->stop();
+	ansa->stop();
+	global.stop();
 
 	std::cout << "web_news_counter: " << web_news_counter << std::endl;
 	std::cout << "ansa_counter: " << ansa_counter << std::endl;

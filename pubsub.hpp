@@ -70,30 +70,32 @@ namespace ps
 		void send(T&& data)
 		{
 			for(auto& sub : subs)
-				sub->deliver(this, data);
+				sub.second->deliver(this, data);
 		}
 
 		void subscribe(Subscriber<T>* s)
 		{
-			subs.push_back(s);
+			subs[s->get_id()] = s;
 		}
 
-		size_t get_id() const
+		void unsubscribe(Subscriber<T>* s)
 		{
-			return id;
+			subs.erase(s->get_id());
 		}
+
+		size_t get_id() const {	return id; }
 
 	private:
 		static size_t get_counter()
 		{
-			static std::size_t counter = 0;
+			static std::size_t counter{};
 			counter++;
 			return counter;
 		}
 
 		size_t id{get_counter()};
 		std::string _name{};
-		std::vector<Subscriber<T>*> subs;
+		std::map<size_t, Subscriber<T>*> subs;
 	};
 
 	template <typename T>
@@ -141,6 +143,11 @@ namespace ps
 			topic->subscribe(this);
 		}
 
+		void unsubscribe(const topic_ptr_t<T>& topic)
+		{
+			topic->unsubscribe(this);
+		}
+
 		virtual void deliver(topic_raw_ptr topic, data_t e)
 		{
 			msg_container_t<T> msg{topic, e};
@@ -169,7 +176,7 @@ namespace ps
 				th.join();
 		}
 
-		void unsubscribe()
+		void stop()
 		{
 			if (!stopped)
 			{
@@ -178,9 +185,17 @@ namespace ps
 			}
 		}
 
-		virtual ~Subscriber() {	unsubscribe(); }
+		size_t get_id() const {	return id; }
+		virtual ~Subscriber() {	stop(); }
 
 	protected:
+		static size_t get_counter()
+		{
+			static std::size_t counter{};
+			counter++;
+			return counter;
+		}
+
 		virtual void event_loop()
 		{
 			msg_container_t<T> msg;
@@ -198,8 +213,11 @@ namespace ps
 				if (!g_data && stopped)
 					break;
 
-				if (!g_data) // no data at all (for every queue)
+				if (!g_data) // no data
+				{
+
 					std::this_thread::sleep_for(std::chrono::milliseconds(50));
+				}
 			}
 		}
 
@@ -213,7 +231,10 @@ namespace ps
 		f_callback_t callaback;
 		queue_t data;
 		std::atomic<bool> stopped{true};
+
+		std::vector<topic_ptr_t<T>> topics;
 		std::thread th;
+		const size_t id{get_counter()};
 	};
 
 
