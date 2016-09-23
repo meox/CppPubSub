@@ -109,8 +109,9 @@ namespace ps
 		void subscribe(Subscriber<T>* s)
 		{
 			std::lock_guard<std::mutex> l{m};
-			subs[s->get_id()] = s;
-			signals[s->get_id()].clear();
+			const auto id = s->get_id();
+			subs[id] = s;
+			signals[id].clear();
 		}
 
 		void unsubscribe(Subscriber<T>* s)
@@ -251,20 +252,26 @@ namespace ps
 
 		void stop()
 		{
-			std::lock_guard<std::mutex> l(m);
-			to_stop = true;
+			std::unique_lock<std::mutex> l(m);
+			if (!stopped)
+				to_stop = true;
+			l.unlock(); wait();
 		}
-
-		size_t get_id() const { return id; }
 
 		virtual ~Subscriber()
 		{
-			stop();
+			std::unique_lock<std::mutex> l(m);
+			if (!stopped)
+				to_stop = true;
+
+			l.unlock();
 			if (th.joinable())
 				th.join();
 		}
 
+		size_t get_id() const { return id; }
 	protected:
+
 		static size_t get_counter()
 		{
 			static std::size_t counter{};
@@ -276,15 +283,15 @@ namespace ps
 			msg_container_t<T> msg;
 			while (true)
 			{
-				bool data_arrived{false};
+				bool data_in_queue{false};
 				const auto is_data = data.pop(msg);
 				if (is_data)
 				{
-					data_arrived = true;
+					data_in_queue = true;
 					execute(msg.topic_ptr, msg.data);
 				}
 
-				if (!data_arrived)
+				if (!data_in_queue)
 				{
 					{
 						std::lock_guard<std::mutex> l(m);
@@ -300,8 +307,9 @@ namespace ps
 		void emit_signal(int type_signal)
 		{
 			std::lock_guard<std::mutex> l(m);
-			for (auto& t : topics)
-				t.second->signal(type_signal, get_id());
+			const auto id = get_id();
+			for (const auto& t : topics)
+				t.second->signal(type_signal, id);
 		}
 
 		virtual void execute(topic_raw_ptr topic, data_t data)

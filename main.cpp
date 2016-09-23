@@ -7,7 +7,7 @@
 using namespace ps;
 
 
-struct global_sub : Subscriber<std::string*>
+struct global_sub : public Subscriber<std::string*>
 {
 	void execute(topic_raw_ptr topic, data_t data) override
 	{
@@ -61,8 +61,9 @@ int main()
 
 
 	global_sub global;
-	global.subscribe({meteo_a, meteo_b});
+	global.subscribe({meteo_a/*, meteo_b*/});
 
+	global.counter = 0;
 	global.run();
 
 	std::thread th_meteo([&]{
