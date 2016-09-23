@@ -30,12 +30,14 @@ struct publisher_t : Publisher<std::string*>
 {
 	using Publisher<std::string*>::Publisher;
 
+	void set_name(std::string n) { name = std::move(n); }
 	virtual void signal(int type_signal) override
 	{
-		std::cout << "custom_publisher (" << type_signal << ") " << c++ << "\n";
+		std::cout << "custom_publisher (name: " << name << ", signal: " << type_signal << ") " << c++ << "\n";
 	}
 
 private:
+	std::string name{"."};
 	size_t c{};
 };
 
@@ -51,9 +53,11 @@ int main()
 {
 	auto meteo_a = create_topic<std::string*>("meteo-a");
 	auto meteo_a_station = create_publisher<std::string*, publisher_t>(meteo_a);
+	meteo_a_station->set_name("A");
 
 	auto meteo_b = create_topic<std::string*>("meteo-b");
 	auto meteo_b_station = create_publisher<std::string*, publisher_t>(meteo_b);
+	meteo_b_station->set_name("B");
 
 
 	global_sub global;

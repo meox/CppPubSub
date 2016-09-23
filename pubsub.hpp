@@ -181,14 +181,12 @@ namespace ps
 
 		void subscribe(const std::vector<topic_ptr_t<T>>& topics)
 		{
-			std::lock_guard<std::mutex> l{m};
 			for (const auto& topic : topics)
 				subscribe(topic);
 		}
 
 		void subscribe(const std::initializer_list<topic_ptr_t<T>>& topics)
 		{
-			std::lock_guard<std::mutex> l{m};
 			for (const auto& topic : topics)
 				subscribe(topic);
 		}
@@ -336,7 +334,7 @@ namespace ps
 	}
 
 	template <typename T, typename Q>
-	publisher_ptr_t<T> create_publisher(topic_ptr_t<T> topic)
+	std::shared_ptr<Q> create_publisher(topic_ptr_t<T> topic)
 	{
 		return std::make_shared<Q>(topic);
 	}
