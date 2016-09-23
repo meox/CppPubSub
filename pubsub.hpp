@@ -15,6 +15,12 @@
 #include <boost/lockfree/policies.hpp>
 #include <boost/lockfree/queue.hpp>
 #include <set>
+#include <queue>
+
+
+#ifndef UNUSED
+#define UNUSED(...) [__VA_ARGS__](){};
+#endif
 
 
 namespace ps
@@ -46,7 +52,8 @@ namespace ps
 			_topic->send(std::forward<T>(msg));
 		}
 
-		virtual void signal(int type_signal) {}
+		virtual void signal(int /*type_signal*/) {
+		}
 
 		size_t get_id() const {	return id; }
 		virtual ~Publisher()
@@ -84,45 +91,45 @@ namespace ps
 		void send(T&& data)
 		{
 			for(auto& sub : subs)
-				sub.second->deliver(this, data);
+				sub.second->deliver(this, std::forward<T>(data));
 		}
 
 		void attach(Publisher<T>* s)
 		{
-			std::lock_guard<std::mutex> l(m);
+			std::lock_guard<std::mutex> l{m};
 			pubs[s->get_id()] = s;
 		}
 
 		void detach(Publisher<T>* s)
 		{
-			std::lock_guard<std::mutex> l(m);
+			std::lock_guard<std::mutex> l{m};
 			pubs.erase(s->get_id());
 		}
 
 		void subscribe(Subscriber<T>* s)
 		{
-			std::lock_guard<std::mutex> l(m);
+			std::lock_guard<std::mutex> l{m};
 			subs[s->get_id()] = s;
 			signals[s->get_id()].clear();
 		}
 
 		void unsubscribe(Subscriber<T>* s)
 		{
-			std::lock_guard<std::mutex> l(m);
+			std::lock_guard<std::mutex> l{m};
 			subs.erase(s->get_id());
 			signals.erase(s->get_id());
 		}
 
 		void signal(int type_signal, size_t subscriber_id)
 		{
-			std::lock_guard<std::mutex> l(m);
+			std::lock_guard<std::mutex> l{m};
 			signals[subscriber_id].insert(type_signal);
 
-			bool r = std::all_of(signals.begin(), signals.end(), [type_signal](const auto& e){
+			const auto num_signals = std::count_if(signals.begin(), signals.end(), [type_signal](const auto& e){
 				return e.second.find(type_signal) != e.second.end();
 			});
 
-			if (r)
+			if (num_signals > 0 && static_cast<size_t>(num_signals) == subs.size())
 			{
 				for (auto& e : signals)
 					e.second.erase(type_signal);
@@ -132,14 +139,15 @@ namespace ps
 			}
 		}
 
-		size_t get_id() const {	return id; }
+		size_t get_id() const { return id; }
+
+		virtual ~Topic(){}
 
 	private:
 		static size_t get_counter()
 		{
 			static std::size_t counter{};
-			counter++;
-			return counter;
+			return counter++;
 		}
 
 		std::mutex m;
@@ -151,60 +159,60 @@ namespace ps
 	};
 
 
+#pragma pack(push, 1)
 	template <typename T>
 	struct msg_container_t
 	{
 		const Topic<T>* topic_ptr;
 		T data;
 	};
-
+#pragma pack(pop)
 
 	template <typename T>
 	class Subscriber
 	{
 	public:
-		using f_callback_t = std::function<void(const Topic<T>* topic, T data)>;
-		using queue_t = boost::lockfree::queue<msg_container_t<T>, boost::lockfree::capacity<32000ul>>;
-
+		using queue_t = boost::lockfree::queue<msg_container_t<T>, boost::lockfree::fixed_sized<true>, boost::lockfree::capacity<55535ul>>;
 		using topic_raw_ptr = const Topic<T>*;
 		using data_t = const T&;
+		using f_callback_t = std::function<void(topic_raw_ptr topic, data_t data)>;
 
 		Subscriber() = default;
-		Subscriber(f_callback_t f) : callaback{std::move(f)}
-		{}
 
 		void subscribe(const std::vector<topic_ptr_t<T>>& topics)
 		{
+			std::lock_guard<std::mutex> l{m};
 			for (const auto& topic : topics)
 				subscribe(topic);
 		}
 
 		void subscribe(const std::initializer_list<topic_ptr_t<T>>& topics)
 		{
-			for (const auto& topic : topics)
-				subscribe(topic);
-		}
-
-		void subscribe(const std::vector<topic_ptr_t<T>>& topics, f_callback_t f)
-		{
-			callaback = std::move(f);
+			std::lock_guard<std::mutex> l{m};
 			for (const auto& topic : topics)
 				subscribe(topic);
 		}
 
 		void subscribe(const topic_ptr_t<T>& topic)
 		{
+			std::lock_guard<std::mutex> l{m};
 			topic->subscribe(this);
 			topics[topic->get_id()] = topic;
 		}
 
 		void unsubscribe(const topic_ptr_t<T>& topic)
 		{
+			std::lock_guard<std::mutex> l{m};
 			topic->unsubscribe(this);
 			topics.erase(topic->get_id());
 		}
 
-		virtual void deliver(topic_raw_ptr topic, data_t e)
+		void set_callback(f_callback_t f)
+		{
+			extecute_callback = std::move(f);
+		}
+
+		virtual void deliver(topic_raw_ptr topic, T e)
 		{
 			msg_container_t<T> msg{topic, e};
 
@@ -214,71 +222,76 @@ namespace ps
 				if (b)
 					break;
 				else
-					std::this_thread::sleep_for(std::chrono::milliseconds(10));
+					std::this_thread::sleep_for(std::chrono::milliseconds(50));
 			}
 		}
 
 		void run()
 		{
-			stopped = false;
 			th = std::thread([this](){
+				{
+					std::lock_guard<std::mutex> l(m);
+					stopped = false;
+				}
 				event_loop();
+				{
+					std::lock_guard<std::mutex> l(m);
+					stopped = true;
+				}
 			});
 		}
 
 		void wait()
 		{
-			if (!stopped)
-				th.join();
-		}
-
-		void stop()
-		{
+			std::unique_lock<std::mutex> l(m);
 			if (!stopped)
 			{
-				stopped = true;
+				l.unlock();
 				th.join();
 			}
 		}
 
-		size_t get_id() const {	return id; }
-		virtual ~Subscriber() {	stop(); }
+		void stop()
+		{
+			std::lock_guard<std::mutex> l(m);
+			to_stop = true;
+		}
+
+		size_t get_id() const { return id; }
+
+		virtual ~Subscriber()
+		{
+			stop();
+			if (th.joinable())
+				th.join();
+		}
 
 	protected:
 		static size_t get_counter()
 		{
 			static std::size_t counter{};
-			counter++;
-			return counter;
+			return counter++;
 		}
 
 		virtual void event_loop()
 		{
 			msg_container_t<T> msg;
-			bool at_least_one{false};
-			bool mute_nodata{false};
-
 			while (true)
 			{
 				bool data_arrived{false};
 				const auto is_data = data.pop(msg);
 				if (is_data)
 				{
-					mute_nodata = false;
-					at_least_one = true;
 					data_arrived = true;
 					execute(msg.topic_ptr, msg.data);
 				}
 
 				if (!data_arrived)
 				{
-					if (stopped)
-						break;
-
-					if (at_least_one && !mute_nodata)
 					{
-						emit_signal(0);
-						mute_nodata = true;
+						std::lock_guard<std::mutex> l(m);
+						if (to_stop)
+							break;
 					}
 
 					std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -288,21 +301,22 @@ namespace ps
 
 		void emit_signal(int type_signal)
 		{
+			std::lock_guard<std::mutex> l(m);
 			for (auto& t : topics)
 				t.second->signal(type_signal, get_id());
 		}
 
 		virtual void execute(topic_raw_ptr topic, data_t data)
 		{
-			if(callaback)
-				callaback(topic, data);
+			extecute_callback(topic, data);
 		}
 
 	private:
-		f_callback_t callaback;
+		std::mutex m;
 		queue_t data;
-		std::atomic<bool> stopped{true};
-
+		f_callback_t extecute_callback;
+		bool stopped{true};
+		bool to_stop{false};
 		std::map<size_t, topic_ptr_t<T>> topics;
 		std::thread th;
 		const size_t id{get_counter()};
@@ -327,19 +341,21 @@ namespace ps
 		return std::make_shared<Q>(topic);
 	}
 
-	template <typename T>
-	subscriber_ptr_t<T> create_subscriber(const topic_ptr_t<T>& topic, typename Subscriber<T>::f_callback_t&& f)
+	template <typename T, typename F>
+	subscriber_ptr_t<T> create_subscriber(const topic_ptr_t<T>& topic, F&& f)
 	{
-		auto s = std::make_shared<Subscriber<T>>(f);
+		auto s = std::make_shared<Subscriber<T>>();
 		s->subscribe(topic);
+		s->set_callback(std::forward<F>(f));
 		return s;
 	}
 
 	template <typename T, typename F>
 	subscriber_ptr_t<T> create_subscriber(const std::vector<topic_ptr_t<T>>& topics, F&& f)
 	{
-		auto s = std::make_shared<Subscriber<T>>(f);
+		auto s = std::make_shared<Subscriber<T>>();
 		s->subscribe(topics);
+		s->set_callback(std::forward<F>(f));
 		return s;
 	}
 
