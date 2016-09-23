@@ -79,7 +79,7 @@ int main()
 	});
 
 	th_meteo.join();
-	global.stop();
+	global.stop_wait();
 
 	std::cout << "g_counter: " << global.counter << std::endl;
 

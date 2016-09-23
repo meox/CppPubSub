@@ -244,27 +244,27 @@ namespace ps
 		{
 			std::unique_lock<std::mutex> l(m);
 			if (!stopped)
-			{
 				l.unlock();
+
+			if (th.joinable())
 				th.join();
-			}
 		}
 
 		void stop()
 		{
 			std::lock_guard<std::mutex> l(m);
-			if (!stopped)
-				to_stop = true;
+			to_stop = true;
+		}
+
+		void stop_wait()
+		{
+			stop();
+			wait();
 		}
 
 		virtual ~Subscriber()
 		{
-			std::unique_lock<std::mutex> l(m);
-			if (!stopped)
-				to_stop = true;
-			l.unlock();
-
-			wait();
+			stop_wait();
 		}
 
 		size_t get_id() const { return id; }
