@@ -18,11 +18,6 @@
 #include <queue>
 
 
-#ifndef UNUSED
-#define UNUSED(...) [__VA_ARGS__](){};
-#endif
-
-
 namespace ps
 {
 	template <typename T>
@@ -164,10 +159,11 @@ namespace ps
 	template <typename T>
 	struct msg_container_t
 	{
-		const Topic<T>* topic_ptr;
+		const Topic<T>* topic_ptr{nullptr};
 		T data;
 	};
 #pragma pack(pop)
+
 
 	template <typename T>
 	class Subscriber
@@ -199,6 +195,8 @@ namespace ps
 			topics[topic->get_id()] = topic;
 		}
 
+		size_t num_topics() const { return topics.size(); }
+
 		void unsubscribe(const topic_ptr_t<T>& topic)
 		{
 			std::lock_guard<std::mutex> l{m};
@@ -213,7 +211,9 @@ namespace ps
 
 		virtual void deliver(topic_raw_ptr topic, T e)
 		{
-			msg_container_t<T> msg{topic, e};
+			msg_container_t<T> msg;
+			msg.topic_ptr = topic;
+			msg.data = e;
 
 			while (true)
 			{
@@ -252,10 +252,9 @@ namespace ps
 
 		void stop()
 		{
-			std::unique_lock<std::mutex> l(m);
+			std::lock_guard<std::mutex> l(m);
 			if (!stopped)
 				to_stop = true;
-			l.unlock(); wait();
 		}
 
 		virtual ~Subscriber()
@@ -263,15 +262,14 @@ namespace ps
 			std::unique_lock<std::mutex> l(m);
 			if (!stopped)
 				to_stop = true;
-
 			l.unlock();
-			if (th.joinable())
-				th.join();
+
+			wait();
 		}
 
 		size_t get_id() const { return id; }
-	protected:
 
+	protected:
 		static size_t get_counter()
 		{
 			static std::size_t counter{};
@@ -280,9 +278,9 @@ namespace ps
 
 		virtual void event_loop()
 		{
-			msg_container_t<T> msg;
 			while (true)
 			{
+				msg_container_t<T> msg{};
 				bool data_in_queue{false};
 				const auto is_data = data.pop(msg);
 				if (is_data)
