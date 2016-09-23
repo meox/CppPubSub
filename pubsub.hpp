@@ -204,9 +204,17 @@ namespace ps
 			topics.erase(topic->get_id());
 		}
 
+        void unsubscribe()
+        {
+            std::lock_guard<std::mutex> l{m};
+            for (const auto& topic : topics)
+                topic.second->unsubscribe(this);
+            topics.clear();
+        }
+
 		void set_callback(f_callback_t f)
 		{
-			extecute_callback = std::move(f);
+            f_extecute_callback = std::move(f);
 		}
 
 		virtual void deliver(topic_raw_ptr topic, T e)
@@ -229,12 +237,12 @@ namespace ps
 		{
 			th = std::thread([this](){
 				{
-					std::lock_guard<std::mutex> l(m);
+					std::lock_guard<std::mutex> l{m};
 					stopped = false;
 				}
 				event_loop();
 				{
-					std::lock_guard<std::mutex> l(m);
+					std::lock_guard<std::mutex> l{m};
 					stopped = true;
 				}
 			});
@@ -242,7 +250,7 @@ namespace ps
 
 		void wait()
 		{
-			std::unique_lock<std::mutex> l(m);
+			std::unique_lock<std::mutex> l{m};
 			if (!stopped)
 				l.unlock();
 
@@ -252,7 +260,7 @@ namespace ps
 
 		void stop()
 		{
-			std::lock_guard<std::mutex> l(m);
+			std::lock_guard<std::mutex> l{m};
 			to_stop = true;
 		}
 
@@ -264,6 +272,7 @@ namespace ps
 
 		virtual ~Subscriber()
 		{
+            unsubscribe();
 			stop_wait();
 		}
 
@@ -278,9 +287,9 @@ namespace ps
 
 		virtual void event_loop()
 		{
+            msg_container_t<T> msg{};
 			while (true)
 			{
-				msg_container_t<T> msg{};
 				bool data_in_queue{false};
 				const auto is_data = data.pop(msg);
 				if (is_data)
@@ -292,7 +301,7 @@ namespace ps
 				if (!data_in_queue)
 				{
 					{
-						std::lock_guard<std::mutex> l(m);
+						std::lock_guard<std::mutex> l{m};
 						if (to_stop)
 							break;
 					}
@@ -304,7 +313,7 @@ namespace ps
 
 		void emit_signal(int type_signal)
 		{
-			std::lock_guard<std::mutex> l(m);
+			std::lock_guard<std::mutex> l{m};
 			const auto id = get_id();
 			for (const auto& t : topics)
 				t.second->signal(type_signal, id);
@@ -312,17 +321,18 @@ namespace ps
 
 		virtual void execute(topic_raw_ptr topic, data_t data)
 		{
-			extecute_callback(topic, data);
+            if(f_extecute_callback)
+                f_extecute_callback(topic, data);
 		}
 
 	private:
-		std::mutex m;
-		queue_t data;
-		f_callback_t extecute_callback;
-		bool stopped{true};
-		bool to_stop{false};
-		std::map<size_t, topic_ptr_t<T>> topics;
-		std::thread th;
+        std::thread th;
+        std::mutex m;
+        queue_t data;
+        f_callback_t f_extecute_callback;
+        bool stopped{true};
+        bool to_stop{false};
+        std::map<size_t, topic_ptr_t<T>> topics;
 		const size_t id{get_counter()};
 	};
 

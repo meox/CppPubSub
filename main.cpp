@@ -26,7 +26,7 @@ struct global_sub : public Subscriber<std::string*>
 };
 
 
-struct publisher_t : Publisher<std::string*>
+struct publisher_t : public Publisher<std::string*>
 {
 	using Publisher<std::string*>::Publisher;
 
@@ -66,7 +66,7 @@ int main()
 	global.counter = 0;
 	global.run();
 
-	std::thread th_meteo([&]{
+	std::thread th_meteo([=]{
 		std::vector<std::string> cities{"Rome", "Florence", "Venice"};
 
 		for (uint32_t i = 0; i < 1000000; i++)
