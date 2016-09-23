@@ -16,7 +16,7 @@ struct global_sub : public Subscriber<std::string*>
 		if (counter == 10)
 			std::cout << *data << "\n";
 
-		if (counter % 100 == 0)
+		if (counter % 1000 == 0)
 		{
 			emit_signal(1);
 		}
@@ -61,7 +61,7 @@ int main()
 
 
 	global_sub global;
-	global.subscribe({meteo_a/*, meteo_b*/});
+	global.subscribe({meteo_a, meteo_b});
 
 	global.counter = 0;
 	global.run();
