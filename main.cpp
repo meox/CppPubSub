@@ -22,6 +22,12 @@ struct global_sub : public Subscriber<std::string*>
 		}
 	}
 
+    ~global_sub()
+    {
+        unsubscribe();
+        stop_wait();
+    }
+
 	size_t counter{0};
 };
 
@@ -79,7 +85,7 @@ int main()
 	});
 
 	th_meteo.join();
-	global.stop_wait();
+	//global.stop_wait();
 
 	std::cout << "g_counter: " << global.counter << std::endl;
 
