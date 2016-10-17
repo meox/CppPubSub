@@ -37,23 +37,42 @@ namespace ps
 	class Publisher
 	{
 	public:
-		Publisher(const topic_ptr_t<T>& topic) : _topic{topic}
+		Publisher(const topic_ptr_t<T>& topic)
+		: id{get_counter()}
 		{
-			_topic->attach(this);
+			_topics.push_back(topic);
+			topic->attach(this);
+		}
+
+		Publisher(const std::vector<topic_ptr_t<T>>& topics)
+				: id{get_counter()}
+		{
+			for (auto& t : topics)
+			{
+				m_reverse[t->get_name()] = t;
+				t->attach(this);
+				_topics.push_back(t);
+			}
+		}
+
+		void produce(const std::string& name, T&& msg)
+		{
+			m_reverse[name]->send(std::forward<T>(msg));
 		}
 
 		void produce(T&& msg)
 		{
-			_topic->send(std::forward<T>(msg));
+			for(auto& t: _topics)
+				t->send(std::forward<T>(msg));
 		}
 
-		virtual void signal(int /*type_signal*/) {
-		}
+		virtual void signal(int /*type_signal*/) {}
 
 		size_t get_id() const {	return id; }
 		virtual ~Publisher()
 		{
-			_topic->detach(this);
+			for (auto& t : _topics)
+				t->detach(this);
 		}
 
 	private:
@@ -65,8 +84,9 @@ namespace ps
 		}
 
 	private:
-		const size_t id{get_counter()};
-		topic_ptr_t<T> _topic;
+		const size_t id;
+		std::map<std::string, topic_ptr_t<T>> m_reverse;
+		std::vector<topic_ptr_t<T>> _topics;
 	};
 
 
@@ -78,9 +98,12 @@ namespace ps
 	class Topic
 	{
 	public:
-		Topic() = default;
+		Topic()
+		: id{get_counter()}, _name{std::to_string(id)}
+		{}
 
-		Topic(std::string name) : _name{std::move(name)}
+		Topic(std::string name)
+		: id{get_counter()}, _name{std::move(name)}
 		{}
 
 		void send(T&& data)
@@ -136,6 +159,7 @@ namespace ps
 		}
 
 		size_t get_id() const { return id; }
+		std::string get_name() const { return _name; }
 
 		virtual ~Topic(){}
 
@@ -147,8 +171,8 @@ namespace ps
 		}
 
 		std::mutex m;
-		size_t id{get_counter()};
-		std::string _name{};
+		const size_t id;
+		std::string _name;
 		std::map<size_t, Subscriber<T>*> subs;
 		std::map<size_t, Publisher<T>*> pubs;
 		std::map<size_t, std::set<int>> signals{};
@@ -204,17 +228,17 @@ namespace ps
 			topics.erase(topic->get_id());
 		}
 
-        void unsubscribe()
-        {
-            std::lock_guard<std::mutex> l{m};
-            for (const auto& topic : topics)
-                topic.second->unsubscribe(this);
-            topics.clear();
-        }
+		void unsubscribe()
+		{
+			std::lock_guard<std::mutex> l{m};
+			for (const auto& topic : topics)
+				topic.second->unsubscribe(this);
+			topics.clear();
+		}
 
 		void set_callback(f_callback_t f)
 		{
-            f_extecute_callback = std::move(f);
+			f_extecute_callback = std::move(f);
 		}
 
 		virtual void deliver(topic_raw_ptr topic, T e)
@@ -223,37 +247,32 @@ namespace ps
 			msg.topic_ptr = topic;
 			msg.data = e;
 
+			size_t k{};
 			while (true)
 			{
 				bool b = data.push(msg);
 				if (b)
 					break;
 				else
+				{
+					if (k > 100)
+					{
+						std::cerr << "[CRITICAL] deliver error!\n";
+						break;
+					}
+					k++;
 					std::this_thread::sleep_for(std::chrono::milliseconds(50));
+				}
 			}
 		}
 
 		void run()
 		{
-			th = std::thread([this](){
-				{
-					std::lock_guard<std::mutex> l{m};
-					stopped = false;
-				}
-				event_loop();
-				{
-					std::lock_guard<std::mutex> l{m};
-					stopped = true;
-				}
-			});
+			th = std::thread(&Subscriber::event_loop, this);
 		}
 
 		void wait()
 		{
-			std::unique_lock<std::mutex> l{m};
-			if (!stopped)
-				l.unlock();
-
 			if (th.joinable())
 				th.join();
 		}
@@ -272,7 +291,7 @@ namespace ps
 
 		virtual ~Subscriber()
 		{
-            unsubscribe();
+			unsubscribe();
 			stop_wait();
 		}
 
@@ -287,7 +306,7 @@ namespace ps
 
 		virtual void event_loop()
 		{
-            msg_container_t<T> msg{};
+			msg_container_t<T> msg{};
 			while (true)
 			{
 				bool data_in_queue{false};
@@ -321,18 +340,17 @@ namespace ps
 
 		virtual void execute(topic_raw_ptr topic, data_t data)
 		{
-            if(f_extecute_callback)
-                f_extecute_callback(topic, data);
+			if(f_extecute_callback)
+				f_extecute_callback(topic, data);
 		}
 
 	private:
-        std::thread th;
-        std::mutex m;
-        queue_t data;
-        f_callback_t f_extecute_callback;
-        bool stopped{true};
-        bool to_stop{false};
-        std::map<size_t, topic_ptr_t<T>> topics;
+		std::thread th;
+		std::mutex m;
+		queue_t data;
+		f_callback_t f_extecute_callback;
+		bool to_stop{false};
+		std::map<size_t, topic_ptr_t<T>> topics;
 		const size_t id{get_counter()};
 	};
 
@@ -349,10 +367,22 @@ namespace ps
 		return std::make_shared<Publisher<T>>(topic);
 	}
 
+	template <typename T>
+	publisher_ptr_t<T> create_publisher(const std::vector<topic_ptr_t<T>>& topics)
+	{
+		return std::make_shared<Publisher<T>>(topics);
+	}
+
 	template <typename T, typename Q>
 	std::shared_ptr<Q> create_publisher(topic_ptr_t<T> topic)
 	{
 		return std::make_shared<Q>(topic);
+	}
+
+	template <typename T, typename Q>
+	std::shared_ptr<Q> create_publisher(const std::vector<topic_ptr_t<T>>& topics)
+	{
+		return std::make_shared<Q>(topics);
 	}
 
 	template <typename T, typename F>
