@@ -3,9 +3,7 @@
 #include "pubsub.hpp"
 
 
-
 using namespace ps;
-
 
 struct global_sub : public Subscriber<std::string*>
 {
@@ -65,6 +63,7 @@ int main()
 	auto meteo_b_station = create_publisher<std::string*, publisher_t>(meteo_b);
 	meteo_b_station->set_name("B");
 
+	auto meteo_station = create_publisher<std::string*, publisher_t>(std::vector<topic_ptr_t<std::string*>>{meteo_a, meteo_b});
 
 	global_sub global;
 	global.subscribe({meteo_a, meteo_b});
@@ -78,14 +77,14 @@ int main()
 		for (uint32_t i = 0; i < 1000000; i++)
 		{
 			const std::string tcelsius_a = std::to_string(24 + (i % 10));
-			const std::string tcelsius_b = std::to_string(34 + (i % 19));
-			meteo_a_station->produce(push_data(cities[i%3] + ", " + tcelsius_a));
-			meteo_b_station->produce(push_data(cities[i%3] + ", " + tcelsius_b));
+			//const std::string tcelsius_b = std::to_string(34 + (i % 19));
+			meteo_station->produce(push_data(cities[i%3] + ", " + tcelsius_a));
+			//meteo_b_station->produce(push_data(cities[i%3] + ", " + tcelsius_b));
 		}
 	});
 
 	th_meteo.join();
-	//global.stop_wait();
+	global.stop_wait();
 
 	std::cout << "g_counter: " << global.counter << std::endl;
 
